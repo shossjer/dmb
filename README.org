@@ -1,0 +1,12 @@
+* DIY Micro Benchmark
+
+  More to come.
+
+* Getting started
+
+** perf
+
+   Is Linux paranoid about perf? Lower its paranoia by:
+   #+BEGIN_SRC sh
+sudo nano /proc/sys/kernel/perf_event_paranoid
+   #+END_SRC
