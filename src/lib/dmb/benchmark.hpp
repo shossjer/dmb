@@ -18,6 +18,7 @@ namespace dmb
 #include <unistd.h>
 
 #include <cerrno>
+#include <cmath>
 #include <cstdio>
 
 namespace dmb
@@ -212,69 +213,67 @@ namespace dmb
 		// P
 		// E
 
-		utime exp = 0;
-		if (scl > 1)
+		int shift = 0;
+		if (scl == 10) shift = 1;
+		if (scl == 100) shift = 2;
+		if (scl == 1000) shift = 3;
+		if (scl == 10000) shift = 4;
+		if (scl == 100000) shift = 5;
+		if (scl == 1000000) shift = 6;
+
+		static const char unit_table[] =
 		{
-			const utime tst = val / scl;
-			utime scale = 1;
-			if (tst < 10) exp = 5, scale = 100000;
-			else if (tst < 100) exp = 4, scale = 10000;
-			else if (tst < 1000) exp = 3, scale = 1000;
-			else if (tst < 10000) exp = 2, scale = 100;
-			else if (tst < 100000) exp = 1, scale = 10;
-			val = val * scale / scl;
+			' ', 'K', 'M', 'G', 'T', 'P', 'E',
+		};
+
+		// todo what is this logic?
+		char sillybuffer[20 + 1];
+		const int count = ::sprintf(sillybuffer, "%zu", val); // digits in val
+		const char unit = unit_table[(count - 1 - shift) / 3];
+		const int split = shift != 0 ? 6 - shift : count < 4 ? 7 : count < 7 ? 3 : (count - 1) % 3 + 1;
+
+		while (val >= 1000000)
+		{
+			val /= 10;
 		}
 
-		if (val < 1000000)
-		{
 			*reinterpret_cast<long *>(buffer) = 0x2020202020202020;
 
-			int ci = 7;
-			if (exp == 0) buffer[ci--] = '.';
+			buffer[7] = unit;
+
+			int ci = 6;
+			if (split == ci) buffer[ci--] = '.';
 			buffer[ci--] = '0' + (val % 10);
 			val /= 10;
 			if (val > 0)
 			{
-				if (exp == 1) buffer[ci--] = '.';
+				if (split == ci) buffer[ci--] = '.';
 				buffer[ci--] = '0' + (val % 10);
 				val /= 10;
 				if (val > 0)
 				{
-					if (exp == 2) buffer[ci--] = '.';
+					if (split == ci) buffer[ci--] = '.';
 					buffer[ci--] = '0' + (val % 10);
 					val /= 10;
 					if (val > 0)
 					{
-						if (exp == 3) buffer[ci--] = '.';
+						if (split == ci) buffer[ci--] = '.';
 						buffer[ci--] = '0' + (val % 10);
 						val /= 10;
 						if (val > 0)
 						{
-							if (exp == 4) buffer[ci--] = '.';
+							if (split == ci) buffer[ci--] = '.';
 							buffer[ci--] = '0' + (val % 10);
 							val /= 10;
 							if (val > 0)
 							{
-								if (exp == 5) buffer[ci--] = '.';
+								if (split == ci) buffer[ci--] = '.';
 								buffer[ci--] = '0' + (val % 10);
 							}
 						}
 					}
 				}
 			}
-		}
-		else
-		{
-			buffer[0] = ' ';
-			buffer[1] = ' ';
-			buffer[2] = ' ';
-			buffer[3] = ' ';
-			buffer[4] = ' ';
-			buffer[5] = ' ';
-			buffer[6] = ' ';
-			buffer[7] = ' ';
-			// buffer[8] = 'c';
-		}
 	}
 
 	struct impl;
@@ -352,11 +351,7 @@ namespace dmb
 				fd0[i] -= 26;
 			}
 
-			utime tot = 0;
-			for (usize i = 0; i < nsamples; i++)
-			{
-				tot += res[i];
-			}
+			//
 
 			utime min = utime(-1);
 			for (usize i = 0; i < nsamples; i++)
@@ -367,35 +362,7 @@ namespace dmb
 				}
 			}
 
-			utime sqrsum = 0;
-			for (usize i = 0; i < nsamples; i++)
-			{
-				const stime diff = static_cast<stime>(res[i] - min);
-				sqrsum += static_cast<utime>(diff * diff);
-			}
-
-			const utime sqr = (sqrsum + nsamples - 1) / nsamples;
-			utime minsqrt = 0;
-			utime maxsqrt = sqr / 2;
-			utime lulsqrt = static_cast<utime>(-1);
-			do
-			{
-				const utime avgsqrt = (maxsqrt + minsqrt) / 2;
-				if (lulsqrt == avgsqrt) {
-					break;
-				}
-				lulsqrt = avgsqrt;
-
-				if (avgsqrt * avgsqrt > sqr) {
-					maxsqrt = avgsqrt;
-				}
-				else {
-					minsqrt = avgsqrt;
-				}
-			}
-			while (maxsqrt - minsqrt > 0); // note distance 1 could have highter accuracy
-
-			utime max = utime(0);
+			utime max = 0;
 			for (usize i = 0; i < nsamples; i++)
 			{
 				if (res[i] > max)
@@ -404,23 +371,130 @@ namespace dmb
 				}
 			}
 
-			utime mid = (max + min) / 2;
-			utime sdv = (maxsqrt + minsqrt) / 2;
+			//
+
+			float log_median = 0.f;
+			for (usize i = 0; i < nsamples; i++)
+			{
+				log_median += ::logf(static_cast<float>(res[i]));
+			}
+			log_median /= static_cast<float>(nsamples);
+
+			float log_standard_deviation = 0.f;
+			for (usize i = 0; i < nsamples; i++)
+			{
+				const float diff = ::logf(static_cast<float>(res[i])) - log_median;
+				log_standard_deviation += diff * diff;
+			}
+			log_standard_deviation /= static_cast<float>(nsamples);
+			log_standard_deviation = ::sqrtf(log_standard_deviation);
+
+			// this table was shamelessly borrowed from Wikipedia
+			//
+			// https://en.wikipedia.org/wiki/Standard_normal_table
+			//
+			// todo generate a more detailed table
+			static const float table[41 * 10] = {
+				0.00002f, 0.00002f, 0.00002f, 0.00002f, 0.00003f, 0.00003f, 0.00003f, 0.00003f, 0.00003f, 0.00003f,
+				0.00003f, 0.00003f, 0.00004f, 0.00004f, 0.00004f, 0.00004f, 0.00004f, 0.00004f, 0.00005f, 0.00005f,
+				0.00005f, 0.00005f, 0.00005f, 0.00006f, 0.00006f, 0.00006f, 0.00006f, 0.00007f, 0.00007f, 0.00007f,
+				0.00008f, 0.00008f, 0.00008f, 0.00008f, 0.00009f, 0.00009f, 0.00010f, 0.00010f, 0.00010f, 0.00011f,
+				0.00011f, 0.00012f, 0.00012f, 0.00013f, 0.00013f, 0.00014f, 0.00014f, 0.00015f, 0.00015f, 0.00016f,
+				0.00017f, 0.00017f, 0.00018f, 0.00019f, 0.00019f, 0.00020f, 0.00021f, 0.00022f, 0.00022f, 0.00023f,
+				0.00024f, 0.00025f, 0.00026f, 0.00027f, 0.00028f, 0.00029f, 0.00030f, 0.00031f, 0.00032f, 0.00034f,
+				0.00035f, 0.00036f, 0.00038f, 0.00039f, 0.00040f, 0.00042f, 0.00043f, 0.00045f, 0.00047f, 0.00048f,
+				0.00050f, 0.00052f, 0.00054f, 0.00056f, 0.00058f, 0.00060f, 0.00062f, 0.00064f, 0.00066f, 0.00069f,
+				0.00071f, 0.00074f, 0.00076f, 0.00079f, 0.00082f, 0.00084f, 0.00087f, 0.00090f, 0.00094f, 0.00097f,
+				0.00100f, 0.00104f, 0.00107f, 0.00111f, 0.00114f, 0.00118f, 0.00122f, 0.00126f, 0.00131f, 0.00135f,
+				0.00139f, 0.00144f, 0.00149f, 0.00154f, 0.00159f, 0.00164f, 0.00169f, 0.00175f, 0.00181f, 0.00187f,
+				0.00193f, 0.00199f, 0.00205f, 0.00212f, 0.00219f, 0.00226f, 0.00233f, 0.00240f, 0.00248f, 0.00256f,
+				0.00264f, 0.00272f, 0.00280f, 0.00289f, 0.00298f, 0.00307f, 0.00317f, 0.00326f, 0.00336f, 0.00347f,
+				0.00357f, 0.00368f, 0.00379f, 0.00391f, 0.00402f, 0.00415f, 0.00427f, 0.00440f, 0.00453f, 0.00466f,
+				0.00480f, 0.00494f, 0.00508f, 0.00523f, 0.00539f, 0.00554f, 0.00570f, 0.00587f, 0.00604f, 0.00621f,
+				0.00639f, 0.00657f, 0.00676f, 0.00695f, 0.00714f, 0.00734f, 0.00755f, 0.00776f, 0.00798f, 0.00820f,
+				0.00842f, 0.00866f, 0.00889f, 0.00914f, 0.00939f, 0.00964f, 0.00990f, 0.01017f, 0.01044f, 0.01072f,
+				0.01101f, 0.01130f, 0.01160f, 0.01191f, 0.01222f, 0.01255f, 0.01287f, 0.01321f, 0.01355f, 0.01390f,
+				0.01426f, 0.01463f, 0.01500f, 0.01539f, 0.01578f, 0.01618f, 0.01659f, 0.01700f, 0.01743f, 0.01786f,
+				0.01831f, 0.01876f, 0.01923f, 0.01970f, 0.02018f, 0.02068f, 0.02118f, 0.02169f, 0.02222f, 0.02275f,
+				0.02330f, 0.02385f, 0.02442f, 0.02500f, 0.02559f, 0.02619f, 0.02680f, 0.02743f, 0.02807f, 0.02872f,
+				0.02938f, 0.03005f, 0.03074f, 0.03144f, 0.03216f, 0.03288f, 0.03362f, 0.03438f, 0.03515f, 0.03593f,
+				0.03673f, 0.03754f, 0.03836f, 0.03920f, 0.04006f, 0.04093f, 0.04182f, 0.04272f, 0.04363f, 0.04457f,
+				0.04551f, 0.04648f, 0.04746f, 0.04846f, 0.04947f, 0.05050f, 0.05155f, 0.05262f, 0.05370f, 0.05480f,
+				0.05592f, 0.05705f, 0.05821f, 0.05938f, 0.06057f, 0.06178f, 0.06301f, 0.06426f, 0.06552f, 0.06681f,
+				0.06811f, 0.06944f, 0.07078f, 0.07215f, 0.07353f, 0.07493f, 0.07636f, 0.07780f, 0.07927f, 0.08076f,
+				0.08226f, 0.08379f, 0.08534f, 0.08692f, 0.08851f, 0.09012f, 0.09176f, 0.09342f, 0.09510f, 0.09680f,
+				0.09853f, 0.10027f, 0.10204f, 0.10383f, 0.10565f, 0.10749f, 0.10935f, 0.11123f, 0.11314f, 0.11507f,
+				0.11702f, 0.11900f, 0.12100f, 0.12302f, 0.12507f, 0.12714f, 0.12924f, 0.13136f, 0.13350f, 0.13567f,
+				0.13786f, 0.14007f, 0.14231f, 0.14457f, 0.14686f, 0.14917f, 0.15151f, 0.15386f, 0.15625f, 0.15866f,
+				0.16109f, 0.16354f, 0.16602f, 0.16853f, 0.17106f, 0.17361f, 0.17619f, 0.17879f, 0.18141f, 0.18406f,
+				0.18673f, 0.18943f, 0.19215f, 0.19489f, 0.19766f, 0.20045f, 0.20327f, 0.20611f, 0.20897f, 0.21186f,
+				0.21476f, 0.21770f, 0.22065f, 0.22363f, 0.22663f, 0.22965f, 0.23270f, 0.23576f, 0.23885f, 0.24196f,
+				0.24510f, 0.24825f, 0.25143f, 0.25463f, 0.25785f, 0.26109f, 0.26435f, 0.26763f, 0.27093f, 0.27425f,
+				0.27760f, 0.28096f, 0.28434f, 0.28774f, 0.29116f, 0.29460f, 0.29806f, 0.30153f, 0.30503f, 0.30854f,
+				0.31207f, 0.31561f, 0.31918f, 0.32276f, 0.32636f, 0.32997f, 0.33360f, 0.33724f, 0.34090f, 0.34458f,
+				0.34827f, 0.35197f, 0.35569f, 0.35942f, 0.36317f, 0.36693f, 0.37070f, 0.37448f, 0.37828f, 0.38209f,
+				0.38591f, 0.38974f, 0.39358f, 0.39743f, 0.40129f, 0.40517f, 0.40905f, 0.41294f, 0.41683f, 0.42074f,
+				0.42465f, 0.42858f, 0.43251f, 0.43644f, 0.44038f, 0.44433f, 0.44828f, 0.45224f, 0.45620f, 0.46017f,
+				0.46414f, 0.46812f, 0.47210f, 0.47608f, 0.48006f, 0.48405f, 0.48803f, 0.49202f, 0.49601f, 0.50000f,
+			};
+
+			const float min_standard_normal = (::logf(static_cast<float>(min)) - log_median) / log_standard_deviation;
+			const int index_of_min = static_cast<int>(min_standard_normal * 100.f + .5f) + 410;
+			const float certainty_of_min = 1.f - (index_of_min < 0 ? 0.00000f : table[index_of_min]);
+
+			float best_estimate = ::expf(-1.666666f * log_standard_deviation + log_median);
 
 			char buffer[] =
-				" min: zxxx.yy?c  max: zxxx.yy?c  avg: zxxx.yy?c  mid: zxxx.yy?c  sdv: zxxx.yy?c\n"
+				" min: zxxx.yy?c  acc: zxxx.yy?%  mdn: zxxx.yy?c  sdv: zxxx.yy?c  95%: zxxx.yy?c\n"
 				" ins: ????????n cache:????????n cache:????????m  jmp: ????????n  jmp: ????????m\n";
 			write_time_and_unit(buffer + 6, min);
-			write_time_and_unit(buffer + 6 + 16, max);
-			write_time_and_unit(buffer + 6 + 32, tot, nsamples);
-			write_time_and_unit(buffer + 6 + 48, mid);
-			write_time_and_unit(buffer + 6 + 64, sdv);
+			write_time_and_unit(buffer + 6 + 16, static_cast<utime>(certainty_of_min * 1000000.f), 10000);
+			write_time_and_unit(buffer + 6 + 32, static_cast<utime>(::expf(log_median) + .5f));
+			write_time_and_unit(buffer + 6 + 48, static_cast<utime>((::expf(log_standard_deviation * log_standard_deviation) - 1.f) * ::expf(2.f * log_median + log_standard_deviation * log_standard_deviation) + .5f));
+			write_time_and_unit(buffer + 6 + 64, static_cast<utime>(best_estimate + .5f));
 			write_time_and_unit(buffer + 86, (utime)fd0[0]);
 			write_time_and_unit(buffer + 86 + 16, (utime)fd1[1]);
 			write_time_and_unit(buffer + 86 + 32, (utime)fd2[2]);
 			write_time_and_unit(buffer + 86 + 48, (utime)fd3[3]);
 			write_time_and_unit(buffer + 86 + 64, (utime)fd4[4]);
 			::write(STDOUT_FILENO, buffer, sizeof buffer - 1);
+
+			usize histogram[78] = {};
+			const float log_min = static_cast<float>(min);
+			const float log_max = static_cast<float>(max); // todo next float, should be exclusive
+			usize bin_count = (max - min) + 1;
+			if (bin_count > 78) bin_count = 78;
+			const float bin_size = (log_max - log_min) / static_cast<float>(bin_count);
+
+			usize maxcount = 0;
+			for (usize i = 0; i < nsamples; i++)
+			{
+				int bin = int((static_cast<float>(res[i]) - log_min) / bin_size);
+				if (bin >= 78) bin = 77;
+
+				histogram[bin]++;
+				if (histogram[bin] > maxcount)
+				{
+					maxcount = histogram[bin];
+				}
+			}
+
+			for (usize bin = 0; bin < bin_count; bin++)
+			{
+				histogram[bin] = (histogram[bin] * 6 + maxcount - 1) / maxcount;
+			}
+
+			char histogram_line[1 + 78 + 1];
+			histogram_line[0] = ' ';
+			histogram_line[1 + bin_count] = '\n';
+			for (usize line = 0; line < 7; line++)
+			{
+				for (usize bin = 0; bin < bin_count; bin++)
+				{
+					histogram_line[bin + 1] = histogram[bin] > line ? '#' : ' ';
+				}
+				::write(STDOUT_FILENO, histogram_line, 1 + bin_count + 1);
+			}
 		}
 	};
 
