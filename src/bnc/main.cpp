@@ -1,8 +1,20 @@
 #include <dmb/benchmark.hpp>
 
 #include <string>
+#include <thread>
 
 int c;
+
+DMB_SAMPLE("clock test")
+{
+
+	DMB_CASE("1 milli")()
+	{
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+		return 0;
+	};
+
+}
 
 DMB_SAMPLE("")
 {

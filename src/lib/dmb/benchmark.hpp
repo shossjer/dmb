@@ -189,7 +189,7 @@ namespace dmb
 		constexpr usize size() const { return cnt; }
 	};
 
-	inline void write_time_and_unit(char * buffer, utime val, utime scl = 1)
+	inline void write_time_and_unit(char * buffer, utime val)
 	{
 
 		//       0.c            0
@@ -213,6 +213,91 @@ namespace dmb
 		// P
 		// E
 
+		const utime thz = 2712000000; // todo no hardcode
+
+		static const utime exp_table[] =
+		{
+			1,
+			10,
+			100,
+			1000,
+			10000,
+			100000,
+			1000000,
+			10000000,
+			100000000,
+			1000000000,
+			10000000000,
+			100000000000,
+			1000000000000,
+			10000000000000,
+			100000000000000,
+			1000000000000000,
+			10000000000000000,
+			100000000000000000,
+			1000000000000000000,
+		};
+
+		const int exp = static_cast<int>(::log10(static_cast<double>(1000000 * thz / val - 1))); // todo fast log10
+		const utime scl = exp_table[exp];
+		const utime num = val * scl / thz;
+
+		static const char unit_table[] =
+		{
+			's',
+			'm',
+			'u', // todo µ
+			'n',
+			'p',
+		};
+
+		const int magnitude = exp / 3;
+		const char unit = unit_table[magnitude - 1];
+		const int split = 3 - (exp - magnitude * 3);
+
+		val = num;
+
+		*reinterpret_cast<long *>(buffer) = 0x2020202020202020;
+
+		buffer[7] = unit;
+
+		int ci = 6;
+		if (split == ci) buffer[ci--] = '.';
+		buffer[ci--] = '0' + (val % 10);
+		val /= 10;
+		if (val > 0)
+		{
+			if (split == ci) buffer[ci--] = '.';
+			buffer[ci--] = '0' + (val % 10);
+			val /= 10;
+			if (val > 0)
+			{
+				if (split == ci) buffer[ci--] = '.';
+				buffer[ci--] = '0' + (val % 10);
+				val /= 10;
+				if (val > 0)
+				{
+					if (split == ci) buffer[ci--] = '.';
+					buffer[ci--] = '0' + (val % 10);
+					val /= 10;
+					if (val > 0)
+					{
+						if (split == ci) buffer[ci--] = '.';
+						buffer[ci--] = '0' + (val % 10);
+						val /= 10;
+						if (val > 0)
+						{
+							if (split == ci) buffer[ci--] = '.';
+							buffer[ci--] = '0' + (val % 10);
+						}
+					}
+				}
+			}
+		}
+	}
+
+	inline void write_timeless_number(char * buffer, utime val, utime scl = 1)
+	{
 		int shift = 0;
 		if (scl == 10) shift = 1;
 		if (scl == 100) shift = 2;
@@ -237,11 +322,16 @@ namespace dmb
 			val /= 10;
 		}
 
-			*reinterpret_cast<long *>(buffer) = 0x2020202020202020;
+		*reinterpret_cast<long *>(buffer) = 0x2020202020202020;
 
-			buffer[7] = unit;
+		buffer[7] = unit;
 
-			int ci = 6;
+		int ci = 6;
+		if (split == ci) buffer[ci--] = '.';
+		buffer[ci--] = '0' + (val % 10);
+		val /= 10;
+		if (val > 0)
+		{
 			if (split == ci) buffer[ci--] = '.';
 			buffer[ci--] = '0' + (val % 10);
 			val /= 10;
@@ -264,16 +354,11 @@ namespace dmb
 						{
 							if (split == ci) buffer[ci--] = '.';
 							buffer[ci--] = '0' + (val % 10);
-							val /= 10;
-							if (val > 0)
-							{
-								if (split == ci) buffer[ci--] = '.';
-								buffer[ci--] = '0' + (val % 10);
-							}
 						}
 					}
 				}
 			}
+		}
 	}
 
 	struct impl;
@@ -445,18 +530,22 @@ namespace dmb
 			float best_estimate = ::expf(-1.666666f * log_standard_deviation + log_median);
 
 			char buffer[] =
-				" min: zxxx.yy?c  acc: zxxx.yy?%  mdn: zxxx.yy?c  sdv: zxxx.yy?c  95%: zxxx.yy?c\n"
+				" min: zxxx.yy?s  acc: zxxx.yy?%  tsc: zxxx.yy?c  ???: zxxx.yy?c  ???: zxxx.yy?c\n"
+				" exp: zxxx.yy?s  mdn: zxxx.yy?s  mod: zxxx.yy?s  var: zxxx.yy?s  95%: zxxx.yy?s\n"
 				" ins: ????????n cache:????????n cache:????????m  jmp: ????????n  jmp: ????????m\n";
 			write_time_and_unit(buffer + 6, min);
-			write_time_and_unit(buffer + 6 + 16, static_cast<utime>(certainty_of_min * 1000000.f), 10000);
-			write_time_and_unit(buffer + 6 + 32, static_cast<utime>(::expf(log_median) + .5f));
-			write_time_and_unit(buffer + 6 + 48, static_cast<utime>((::expf(log_standard_deviation * log_standard_deviation) - 1.f) * ::expf(2.f * log_median + log_standard_deviation * log_standard_deviation) + .5f));
-			write_time_and_unit(buffer + 6 + 64, static_cast<utime>(best_estimate + .5f));
-			write_time_and_unit(buffer + 86, (utime)fd0[0]);
-			write_time_and_unit(buffer + 86 + 16, (utime)fd1[1]);
-			write_time_and_unit(buffer + 86 + 32, (utime)fd2[2]);
-			write_time_and_unit(buffer + 86 + 48, (utime)fd3[3]);
-			write_time_and_unit(buffer + 86 + 64, (utime)fd4[4]);
+			write_timeless_number(buffer + 6 + 16, static_cast<utime>(certainty_of_min * 1000000.f + .5f), 10000);
+			write_timeless_number(buffer + 6 + 32, min);
+
+			write_time_and_unit(buffer + 86 + 16, static_cast<utime>(::expf(log_median) + .5f));
+			write_time_and_unit(buffer + 86 + 48, static_cast<utime>((::expf(log_standard_deviation * log_standard_deviation) - 1.f) * ::expf(2.f * log_median + log_standard_deviation * log_standard_deviation) + .5f));
+			write_time_and_unit(buffer + 86 + 64, static_cast<utime>(best_estimate + .5f));
+
+			write_timeless_number(buffer + 166, (utime)fd0[0]);
+			write_timeless_number(buffer + 166 + 16, (utime)fd1[1]);
+			write_timeless_number(buffer + 166 + 32, (utime)fd2[2]);
+			write_timeless_number(buffer + 166 + 48, (utime)fd3[3]);
+			write_timeless_number(buffer + 166 + 64, (utime)fd4[4]);
 			::write(STDOUT_FILENO, buffer, sizeof buffer - 1);
 
 			usize histogram[78] = {};
