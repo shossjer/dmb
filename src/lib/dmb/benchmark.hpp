@@ -169,6 +169,7 @@ namespace dmb
 #define __DMB_FUNC__ __DMB_NAME__(DMB_FUNC, __LINE__)
 #define __DMB_GLOB__ __DMB_NAME__(DMB_GLOB, __LINE__)
 
+#include <cpuid.h> // todo remove
 #include <unistd.h>
 
 namespace dmb
@@ -189,7 +190,12 @@ namespace dmb
 		constexpr usize size() const { return cnt; }
 	};
 
-	inline void write_time_and_unit(char * buffer, utime val)
+	struct cpu_info
+	{
+		utime tsc_frequency;
+	};
+
+	inline void write_time_and_unit(const cpu_info & info, char * buffer, utime val)
 	{
 
 		//       0.c            0
@@ -212,8 +218,6 @@ namespace dmb
 		// T
 		// P
 		// E
-
-		const utime thz = 2712000000; // todo no hardcode
 
 		static const utime exp_table[] =
 		{
@@ -238,9 +242,9 @@ namespace dmb
 			1000000000000000000,
 		};
 
-		const int exp = static_cast<int>(::log10(static_cast<double>(1000000 * thz / val - 1))); // todo fast log10
+		const int exp = static_cast<int>(::log10(static_cast<double>(1000000 * info.tsc_frequency / val - 1))); // todo fast log10
 		const utime scl = exp_table[exp];
-		const utime num = val * scl / thz;
+		const utime num = val * scl / info.tsc_frequency;
 
 		static const char unit_table[] =
 		{
@@ -369,11 +373,14 @@ namespace dmb
 
 	struct exec
 	{
+		const cpu_info & info;
+
 		cstr unit;
 		usize nsamples;
 
-		explicit exec(cstr unit, usize nsamples)
-			: unit(unit)
+		explicit exec(const cpu_info & info, cstr unit, usize nsamples)
+			: info(info)
+			, unit(unit)
 			, nsamples(nsamples)
 		{
 		}
@@ -533,13 +540,13 @@ namespace dmb
 				" min: zxxx.yy?s  acc: zxxx.yy?%  tsc: zxxx.yy?c  ???: zxxx.yy?c  ???: zxxx.yy?c\n"
 				" exp: zxxx.yy?s  mdn: zxxx.yy?s  mod: zxxx.yy?s  var: zxxx.yy?s  95%: zxxx.yy?s\n"
 				" ins: ????????n cache:????????n cache:????????m  jmp: ????????n  jmp: ????????m\n";
-			write_time_and_unit(buffer + 6, min);
+			write_time_and_unit(info, buffer + 6, min);
 			write_timeless_number(buffer + 6 + 16, static_cast<utime>(certainty_of_min * 1000000.f + .5f), 10000);
 			write_timeless_number(buffer + 6 + 32, min);
 
-			write_time_and_unit(buffer + 86 + 16, static_cast<utime>(::expf(log_median) + .5f));
-			write_time_and_unit(buffer + 86 + 48, static_cast<utime>((::expf(log_standard_deviation * log_standard_deviation) - 1.f) * ::expf(2.f * log_median + log_standard_deviation * log_standard_deviation) + .5f));
-			write_time_and_unit(buffer + 86 + 64, static_cast<utime>(best_estimate + .5f));
+			write_time_and_unit(info, buffer + 86 + 16, static_cast<utime>(::expf(log_median) + .5f));
+			write_time_and_unit(info, buffer + 86 + 48, static_cast<utime>((::expf(log_standard_deviation * log_standard_deviation) - 1.f) * ::expf(2.f * log_median + log_standard_deviation * log_standard_deviation) + .5f));
+			write_time_and_unit(info, buffer + 86 + 64, static_cast<utime>(best_estimate + .5f));
 
 			write_timeless_number(buffer + 166, (utime)fd0[0]);
 			write_timeless_number(buffer + 166 + 16, (utime)fd1[1]);
@@ -589,6 +596,8 @@ namespace dmb
 
 	struct impl
 	{
+		cpu_info info;
+
 		usize nsamples;
 		usize nfuncs;
 		func funcs[100];
@@ -617,6 +626,76 @@ namespace dmb
 			fds[2] = perf_event_add(fds[0], PERF_COUNT_HW_CACHE_MISSES);
 			fds[3] = perf_event_add(fds[0], PERF_COUNT_HW_BRANCH_INSTRUCTIONS);
 			fds[4] = perf_event_add(fds[0], PERF_COUNT_HW_BRANCH_MISSES);
+
+			// init info
+			{
+				unsigned int model;
+				unsigned int family;
+				unsigned int model_ext;
+				unsigned int family_ext;
+
+				{
+					static const char buffer[] = "cpu info\n";
+					::write(STDOUT_FILENO, buffer, sizeof buffer - 1);
+				}
+
+				{
+					unsigned int n = 0x01;
+					unsigned int regs[4];
+					__get_cpuid(n, regs + 0, regs + 1, regs + 2, regs + 3);
+
+					model = (regs[0] >> 4) & 0xf;
+					family = (regs[0] >> 8) & 0xf;
+					model_ext = (regs[0] >> 16) & 0xf;
+					family_ext = (regs[0] >> 20) & 0xff;
+
+					::printf(" model: 0x%x, ext: 0x%x\n", model, model_ext);
+					::printf(" family: 0x%x, ext: 0x%x\n", family, family_ext);
+				}
+
+				{
+					unsigned int n = 0x15;
+					unsigned int regs[4];
+					__get_cpuid(n, regs + 0, regs + 1, regs + 2, regs + 3);
+
+					if (regs[1] != 0)
+					{
+						::printf(" TSC / \"core crystal clock\" ratio: %u / %u\n", regs[1], regs[0]);
+					}
+					else
+					{
+						// todo error
+					}
+
+					unsigned int core_crystal_clock_frequency;
+					if (regs[2] != 0)
+					{
+						core_crystal_clock_frequency = regs[2];
+					}
+					else
+					{
+						if (family == 0x6 && family_ext == 0x55)
+						{
+							core_crystal_clock_frequency = 25000000u;
+						}
+						else if (family == 0x6 && family_ext == 0x5c)
+						{
+							core_crystal_clock_frequency = 19200000u;
+						}
+						else
+						{
+							core_crystal_clock_frequency = 24000000u;
+						}
+					}
+					::printf(" nominal frequency of the core crystal clock: %uHz\n", core_crystal_clock_frequency);
+
+					info.tsc_frequency = (utime)core_crystal_clock_frequency * regs[1] / regs[0];
+					::printf(" TSC frequency: %luHz\n", info.tsc_frequency);
+				}
+
+				const char newline = '\n';
+				::write(STDOUT_FILENO, &newline, sizeof newline);
+			}
 		}
 
 		static impl & get()
@@ -627,7 +706,7 @@ namespace dmb
 
 		exec unit(cstr unit)
 		{
-			return exec(unit, nsamples);
+			return exec(info, unit, nsamples);
 		}
 
 	};

@@ -73,43 +73,9 @@ DMB_SAMPLE("arithmetic")
 
 }
 
-#include <cpuid.h>
-
 int main(int argc, const char * argv[])
 {
 	dmb_unused(argv);
-
-	using reg_type = unsigned int;
-	reg_type a[4];
-	{
-		unsigned int n = 0x15;
-		__get_cpuid(n, a + 0, a + 1, a + 2, a + 3);
-		if (a[1] != 0)
-		{
-			::printf("TSC/\"core crystal clock\" ratio: %d/%d\n", a[1], a[0]);
-		}
-		if (a[2] != 0)
-		{
-			::printf("nominal frequency of the core crystal clock: %dHz\n", a[2]);
-		}
-		// "TSC frequency" = "core crystal clock frequency" * a[1]/a[0]
-	}
-	{
-		unsigned int n = 0x16;
-		__get_cpuid(n, a + 0, a + 1, a + 2, a + 3);
-		if ((unsigned short)a[0] != 0)
-		{
-			::printf("processor base frequency: %dMhz\n", (unsigned short)a[0]);
-		}
-		if ((unsigned short)a[1] != 0)
-		{
-			::printf("maximum frequency: %dMhz\n", (unsigned short)a[1]);
-		}
-		if ((unsigned short)a[2] != 0)
-		{
-			::printf("bus reference frequency: %dMhz\n", (unsigned short)a[2]);
-		}
-	}
 
 	c = argc;
 
