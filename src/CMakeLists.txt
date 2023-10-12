@@ -1,9 +1,28 @@
-include (bnc/CMakeLists.txt)
-include (lib/CMakeLists.txt)
+include(bnc/CMakeLists.txt)
+include(gen/CMakeLists.txt)
+include(lib/CMakeLists.txt)
+
+add_executable(dmbgen "")
+target_sources(dmbgen PRIVATE ${DMBGEN_SOURCES} ${DMBGEN_HEADERS} ${DMBGEN_SECRETS})
+target_compile_options(dmbgen PRIVATE
+	$<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:GNU>>:
+		-Wall -Wextra -Wconversion -Werror -march=native -masm=intel>
+	$<$<CXX_COMPILER_ID:MSVC>:
+		/W4 /WX /Zc:rvalueCast>
+	)
+target_compile_definitions(dmbgen PRIVATE
+	$<$<CXX_COMPILER_ID:MSVC>:
+		_CRT_SECURE_NO_WARNINGS>
+	)
+
+file(MAKE_DIRECTORY "${CMAKE_SOURCE_DIR}/gen")
+add_custom_command(OUTPUT "${CMAKE_SOURCE_DIR}/gen/overhead.hpp"
+	COMMAND dmbgen
+	WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/gen")
 
 add_library(dmblib STATIC)
-target_sources(dmblib PRIVATE ${DMBLIB_SOURCES} ${DMBLIB_HEADERS} ${DMBLIB_SECRETS})
-target_include_directories(dmblib PUBLIC "lib")
+target_sources(dmblib PRIVATE ${DMBLIB_SOURCES} ${DMBLIB_HEADERS} ${DMBLIB_SECRETS} "${CMAKE_SOURCE_DIR}/gen/overhead.hpp")
+target_include_directories(dmblib PUBLIC "lib" "${CMAKE_SOURCE_DIR}/gen")
 target_compile_options(dmblib PRIVATE
 	$<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:GNU>>:
 		-Wall -Wextra -Wconversion -Werror -nostdlib -fno-exceptions -fno-rtti -march=native>

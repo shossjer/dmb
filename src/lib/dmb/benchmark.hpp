@@ -12,6 +12,8 @@ namespace dmb
 	using uint64 = unsigned long;
 }
 
+#include "overhead.hpp"
+
 #include <asm/unistd.h>
 #include <linux/perf_event.h>
 #include <sys/ioctl.h>
@@ -51,6 +53,7 @@ namespace dmb
 		}
 		return fd;
 	}
+
 }
 
 #include <x86intrin.h>
@@ -132,7 +135,7 @@ namespace dmb
 		::ioctl(fd, PERF_EVENT_IOC_ENABLE, 0);
 		asm volatile(
 		   "xor %%eax, %%eax\n\t"
-		   "xor %k2, %%edx\n\t"  // %k2 - the low 32 bits of %2
+		   "xor %k2, %%ecx\n\t"  // %k2 - the low 32 bits of %2
 		   "cpuid\n\t"
 			"rdtsc\n\t"
 		   "lfence\n\t"
@@ -147,13 +150,13 @@ namespace dmb
 
 		asm volatile(
 		   "xor %%eax, %%eax\n\t"
-		   "xor %k2, %%edx\n\t"
+		   "xor %k2, %%ecx\n\t"
 		   "cpuid\n\t"
 			"rdtsc\n\t"
 			"lfence\n\t"
 			"mov %%edx, %0\n\t"
-			"mov %%eax, %1\n\t"
-		   : "=r" (afrhi), "=r" (afrlo), "+m" (t)
+			"mov %%eax, %1"
+		   : "=r" (afrhi), "=r" (afrlo), "+m" (t) // todo +r
 			:
 		   : "%rax", "%rdx", "%rbx", "%rcx"
 		);
@@ -162,6 +165,7 @@ namespace dmb
 
 		*r = (((utime)afrhi << 32) | afrlo) - (((utime)bfrhi << 32) | bfrlo);
 	}
+
 }
 
 #define __DMB_CNCT__(stem, line) __##stem##_##line##__
@@ -174,6 +178,7 @@ namespace dmb
 
 namespace dmb
 {
+
 	struct cstr
 	{
 		const char * ptr;
@@ -197,27 +202,6 @@ namespace dmb
 
 	inline void write_time_and_unit(const cpu_info & info, char * buffer, utime val)
 	{
-
-		//       0.c            0
-		//     999.c          999
-		//   1.000kc        1'000
-		//   9.999kc        9'999
-		//  10.000kc       10'000
-		//  99.999kc       99'999
-		// 100.000kc      100'000
-		// 999.999kc      999'999
-		// 1000.00kc    1'000'00-
-		// 1999.99kc    1'999'99-
-		// 2.00000Mc    2'000'00-
-		// 9.99999Mc    9'999'99-
-		// 10.0000Mc   10'000'0--
-		// 99.9999Mc   99'999'9--
-		// 100.000Mc  100'000'---
-		// 999.999Mc  999'999'---
-		// G
-		// T
-		// P
-		// E
 
 		static const utime exp_table[] =
 		{
@@ -431,10 +415,9 @@ namespace dmb
 			}
 			while (idx < nsamples);
 
-			// todo measured to be 113 with 1000 samples
 			for (usize i = 0; i < nsamples; i++)
 			{
-				res[i] -= 112;
+				res[i] -= tsc_overhead;
 			}
 
 			// todo measured to be 26
