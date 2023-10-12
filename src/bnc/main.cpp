@@ -3,8 +3,6 @@
 #include <string>
 #include <thread>
 
-int c;
-
 DMB_SAMPLE("clock test")
 {
 
@@ -75,11 +73,45 @@ DMB_SAMPLE("arithmetic")
 
 int main(int argc, const char * argv[])
 {
-	dmb_unused(argv);
-
-	c = argc;
-
 	dmb::impl & x = dmb::impl::get();
+
+	for (int argi = 1; argi < argc;)
+	{
+		if (argv[argi][0] == '-')
+		{
+			if (argv[argi][1] == '-')
+			{
+				if (argv[argi][2] == 'i' && argv[argi][3] == 'n' && argv[argi][4] == 'f' && argv[argi][5] == 'o' && argv[argi][6] == '\0')
+				{
+					x.flags |= 1;
+					argi++;
+				}
+				else
+				{
+					::fprintf(stderr, "error: the argument \"%s\" is unknown\n", argv[argi]);
+					return -1;
+				}
+			}
+			else if (argv[argi][1] == 'i' && argv[argi][2] == '\0')
+			{
+				x.flags |= 1;
+				argi++;
+			}
+			else
+			{
+				::fprintf(stderr, "error: the argument \"%s\" is unknown\n", argv[argi]);
+				return -1;
+			}
+		}
+		else
+		{
+			::fprintf(stderr, "error: the argument \"%s\" is unknown\n", argv[argi]);
+			return -1;
+		}
+	}
+
+	x.run();
+
 	x.nsamples = argc < 1000 ? 1000 : static_cast<dmb::usize>(argc);
 
 	dmb::usize n = x.nfuncs;

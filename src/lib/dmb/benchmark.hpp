@@ -579,6 +579,8 @@ namespace dmb
 
 	struct impl
 	{
+		unsigned flags;
+
 		cpu_info info;
 
 		usize nsamples;
@@ -586,7 +588,8 @@ namespace dmb
 		func funcs[100];
 
 		impl()
-			: nfuncs(0)
+			: flags(0)
+			, nfuncs(0)
 		{
 			struct perf_event_attr pe{};
 			pe.type = PERF_TYPE_HARDWARE;
@@ -609,7 +612,16 @@ namespace dmb
 			fds[2] = perf_event_add(fds[0], PERF_COUNT_HW_CACHE_MISSES);
 			fds[3] = perf_event_add(fds[0], PERF_COUNT_HW_BRANCH_INSTRUCTIONS);
 			fds[4] = perf_event_add(fds[0], PERF_COUNT_HW_BRANCH_MISSES);
+		}
 
+		static impl & get()
+		{
+			static impl x;
+			return x;
+		}
+
+		void run()
+		{
 			// init info
 			{
 				unsigned int model;
@@ -617,6 +629,7 @@ namespace dmb
 				unsigned int model_ext;
 				unsigned int family_ext;
 
+				if (flags & 1)
 				{
 					static const char buffer[] = "cpu info\n";
 					::write(STDOUT_FILENO, buffer, sizeof buffer - 1);
@@ -632,8 +645,27 @@ namespace dmb
 					model_ext = (regs[0] >> 16) & 0xf;
 					family_ext = (regs[0] >> 20) & 0xff;
 
-					::printf(" model: 0x%x, ext: 0x%x\n", model, model_ext);
-					::printf(" family: 0x%x, ext: 0x%x\n", family, family_ext);
+					if (flags & 1)
+					{
+						::printf(" model: 0x%x, ext: 0x%x\n", model, model_ext);
+						::printf(" family: 0x%x, ext: 0x%x\n", family, family_ext);
+
+						if (regs[3] & (1 << 4))
+						{
+							unsigned int m = 0x80000007;
+							unsigned int segs[4];
+							__get_cpuid(m, segs + 0, segs + 1, segs + 2, segs + 3);
+
+							if (segs[3] & (1 << 8))
+							{
+								::printf(" has invariant TSC\n");
+							}
+							else
+							{
+								::printf(" has variable TSC\n");
+							}
+						}
+					}
 				}
 
 				{
@@ -643,7 +675,10 @@ namespace dmb
 
 					if (regs[1] != 0)
 					{
-						::printf(" TSC / \"core crystal clock\" ratio: %u / %u\n", regs[1], regs[0]);
+						if (flags & 1)
+						{
+							::printf(" TSC / \"core crystal clock\" ratio: %u / %u\n", regs[1], regs[0]);
+						}
 					}
 					else
 					{
@@ -670,21 +705,21 @@ namespace dmb
 							core_crystal_clock_frequency = 24000000u;
 						}
 					}
-					::printf(" nominal frequency of the core crystal clock: %uHz\n", core_crystal_clock_frequency);
-
 					info.tsc_frequency = (utime)core_crystal_clock_frequency * regs[1] / regs[0];
-					::printf(" TSC frequency: %luHz\n", info.tsc_frequency);
+
+					if (flags & 1)
+					{
+						::printf(" nominal frequency of the core crystal clock: %uHz\n", core_crystal_clock_frequency);
+						::printf(" TSC frequency: %luHz\n", info.tsc_frequency);
+					}
 				}
 
-				const char newline = '\n';
-				::write(STDOUT_FILENO, &newline, sizeof newline);
+				if (flags & 1)
+				{
+					const char newline = '\n';
+					::write(STDOUT_FILENO, &newline, sizeof newline);
+				}
 			}
-		}
-
-		static impl & get()
-		{
-			static impl x;
-			return x;
 		}
 
 		exec unit(cstr unit)
