@@ -1,18 +1,44 @@
 #include <dmb/benchmark.hpp>
 
 #include <string>
-#include <thread>
 
-DMB_SAMPLE("clock test")
+#if defined(_WIN32)
+# include <Windows.h>
+#endif
+
+#if !defined(_WIN32)
+// note we disable clock accuracy tests on Windows due to its many
+// problems with accurate timing and sleeping
+//
+// the attached link is only one of many sources that try to
+// understand and educate about the situation
+//
+// https://randomascii.wordpress.com/2020/10/04/windows-timer-resolution-the-great-rule-change/
+# include <thread>
+
+DMB_SAMPLE("clock accuracy") // todo on Windows, hide by default, never disable
 {
 
-	DMB_CASE("1 milli")()
+	DMB_CASE("100 micro")()
 	{
-		std::this_thread::sleep_for(std::chrono::milliseconds(1));
-		return 0;
+		std::this_thread::sleep_for(std::chrono::microseconds(100));
+		return 0; // todo remove
+	};
+
+	DMB_CASE("10 micro")()
+	{
+		std::this_thread::sleep_for(std::chrono::microseconds(10));
+		return 0; // todo remove
+	};
+
+	DMB_CASE("1 micro")()
+	{
+		std::this_thread::sleep_for(std::chrono::microseconds(1));
+		return 0; // todo remove
 	};
 
 }
+#endif
 
 DMB_SAMPLE("")
 {
