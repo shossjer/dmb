@@ -5,8 +5,9 @@ include(lib/CMakeLists.txt)
 add_executable(dmbgen "")
 target_sources(dmbgen PRIVATE ${DMBGEN_SOURCES} ${DMBGEN_HEADERS} ${DMBGEN_SECRETS})
 target_compile_options(dmbgen PRIVATE
-	$<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:GNU>>:
-		-Wall -Wextra -Wconversion -Werror -march=native -masm=intel>
+	$<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:IntelLLVM>>:
+		-Wall -Wextra -Wconversion -Werror -march=native>
+		# -masm=intel
 	$<$<CXX_COMPILER_ID:MSVC>:
 		/W4 /WX /Zc:rvalueCast>
 	)
@@ -25,20 +26,22 @@ target_sources(dmblib PRIVATE ${DMBLIB_SOURCES} ${DMBLIB_HEADERS} ${DMBLIB_SECRE
 target_include_directories(dmblib PUBLIC "lib" "${CMAKE_SOURCE_DIR}/gen")
 target_compile_options(dmblib PRIVATE
 	$<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:GNU>>:
-		-Wall -Wextra -Wconversion -Werror -nostdlib -fno-exceptions -fno-rtti -march=native>
+		-Wall -Wextra -Wconversion -Werror -march=native -nostdlib -fno-exceptions -fno-rtti>
 		# -nostartfiles
+	$<$<CXX_COMPILER_ID:IntelLLVM>:
+		-Wall -Wextra -Wconversion -Werror -march=native>
 	$<$<CXX_COMPILER_ID:MSVC>:
-		/W4 /WX /Zl /GS- /GR- /Zc:rvalueCast>
+		/W4 /WX /Zl /GS- /GR- /Zc:rvalueCast> # /Zc:preprocessor /PD
 	)
 target_compile_definitions(dmblib PRIVATE
 	$<$<CXX_COMPILER_ID:MSVC>:
 		NOMINMAX UNICODE _UNICODE>
 	)
-if(MSVC)
-	set_target_properties(dmblib PROPERTIES
-		STATIC_LIBRARY_FLAGS "/NODEFAULTLIB"
-		)
-endif()
+# if(MSVC)
+# 	set_target_properties(dmblib PROPERTIES
+# 		STATIC_LIBRARY_FLAGS "/NODEFAULTLIB"
+# 		)
+# endif()
 install(TARGETS dmblib DESTINATION lib)
 install(FILES ${DMBLIB_HEADERS} DESTINATION include/dmb)
 
@@ -47,14 +50,15 @@ if(DMB_BUILD_BENCHMARKS)
 	target_sources(dmbbnc PRIVATE ${DMBBNC_SOURCES} ${DMBBNC_HEADERS})
 	target_include_directories(dmbbnc PRIVATE "bnc")
 	target_link_libraries(dmbbnc PRIVATE
-		$<$<CXX_COMPILER_ID:MSVC>:msvc_ignored_options>
+		# $<$<CXX_COMPILER_ID:MSVC>:msvc_ignored_options>
 		dmblib
 		)
 	target_compile_options(dmbbnc PRIVATE
-		$<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:GNU>>:
-			-Wall -Wextra -Wconversion -Werror -march=native -masm=intel>
+		$<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:IntelLLVM>>:
+			-Wall -Wextra -Wconversion -Werror -march=native>
+			# -masm=intel
 		$<$<CXX_COMPILER_ID:MSVC>:
-			/W4 /WX /Zc:rvalueCast>
+			/W4 /WX /Zc:rvalueCast> # /Zl?
 		)
 	target_compile_definitions(dmbbnc PRIVATE
 		$<$<CXX_COMPILER_ID:MSVC>:

@@ -4,9 +4,57 @@
 
 * Getting started
 
-** perf
+** Windows
 
-   Is Linux paranoid about perf? Lower its paranoia by:
-   #+BEGIN_SRC sh
-sudo nano /proc/sys/kernel/perf_event_paranoid
-   #+END_SRC
+   - Compile with ICX from *Intel oneAPI command prompt for Intel 64
+     for Visual Studio 2022* by
+
+     #+BEGIN_SRC sh
+     cd C:\path\to\dmb
+     icx --version
+     >> Intel(R) oneAPI DPC++/C++ Compiler for applications running on Intel(R) 64, Version X.Y.Z Build YYYYMMDD
+     >> ...
+     mkdir build-icx-X.Y.Z-RelWithDebugInfo
+     cd build-icx-X.Y.Z-RelWithDebugInfo
+     cmake -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_COMPILER=icx ..
+     nmake
+     #+END_SRC
+
+   - Compile with MSVC from *x64 Native Tools Command Prompt for VS
+     2022* by
+
+     #+BEGIN_SRC sh
+     cd C:\path\to\dmb
+     cl
+     >> Microsoft (R) C/C++ Optimizing Compiler Version X.Y.Z for x64
+     >> ...
+     mkdir build-msvc-X.Y.Z-RelWithDebugInfo
+     cd build-msvc-X.Y.Z-RelWithDebugInfo
+     cmake -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=RelWithDebInfo ..
+     nmake
+     #+END_SRC
+
+** Linux
+
+*** perf
+
+    Is Linux paranoid about perf? Lower its paranoia by:
+    #+BEGIN_SRC sh
+    sudo nano /proc/sys/kernel/perf_event_paranoid
+    #+END_SRC
+
+** Common
+
+   - Build example benchmarks with the option
+     ~-DDMB_BUILD_BENCHMARKS=ON~ and run them with
+     ~.../build/src/dmbbnc~.
+
+   - Generate assembly for example benchmarks by
+
+     #+BEGIN_SRC sh
+     cd .../build/src
+     <build> bnc/main.cpp.s
+     #+END_SRC
+
+     and then open the produced text file
+     ~...\build\src\CMakeFiles\dmbbnc.dir\bnc\main.cpp.s~

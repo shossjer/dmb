@@ -1,5 +1,11 @@
 #define dmb_unused(x) static_cast<void>(x)
 
+#if defined(__GNUC__) || defined(__clang__)
+# define dmb_inline inline __attribute__((always_inline))
+#elif defined(_MSC_VER)
+# define dmb_inline __forceinline
+#endif
+
 namespace dmb
 {
 
@@ -9,30 +15,67 @@ namespace dmb
 	using utime = usize;
 	using stime = ssize;
 
+#if defined(_WIN32)
+	using uint64 = unsigned long long;
+
+	static_assert(sizeof(long) == 4, "long is 4 bytes on Windows");
+	static_assert(sizeof(long long) == 8, "long long is 8 bytes on Windows");
+#else
 	using uint64 = unsigned long;
+
+	static_assert(sizeof(long) == 8, "long is 8 bytes on Unix");
+	static_assert(sizeof(long long) == 8, "long long is 8 bytes on Unix");
+#endif
+
 }
 
 #include "overhead.hpp"
 
-#include <asm/unistd.h>
-#include <linux/perf_event.h>
-#include <sys/ioctl.h>
-#include <unistd.h>
-
 #include <cerrno>
 #include <cmath>
 #include <cstdio>
+
+#if defined(_WIN32)
+# include <io.h>
+# define STDOUT_FILENO 1
+#endif
+
+namespace dmb
+{
+
+	dmb_inline
+	void write(int fd, const void * data, usize size)
+	{
+#if defined(_WIN32)
+		::_write(fd, data, static_cast<unsigned int>(size));
+#else
+		::write(fd, data, size);
+#endif
+	}
+
+}
+
+#if !defined(_WIN32)
+# include <asm/unistd.h>
+# include <linux/perf_event.h>
+# include <sys/ioctl.h>
+// # include <unistd.h>
 
 namespace dmb
 {
 
 	inline int perf_event_open(struct perf_event_attr * hw_event, pid_t pid, int cpu, int group_fd, unsigned long flags)
 	{
-		long ret;
+		int ret;
 
-		ret = syscall(__NR_perf_event_open, hw_event, pid, cpu, group_fd, flags);
+		asm (
+			"syscall"
+			: "=a"(ret)
+			: "a"(__NR_perf_event_open), "D"(hw_event), "S"(pid), "d"(cpu), ""(group_fd), ""(flags)
+			: "rcx", "r11"
+		);
 
-		return (int)ret;
+		return ret;
 	}
 
 	inline int perf_event_add(int parent, unsigned long config)
@@ -55,11 +98,28 @@ namespace dmb
 	}
 
 }
+#endif
 
-#include <x86intrin.h>
+#if defined(_WIN32)
+# include <intrin.h>
+#else
+# include <x86intrin.h>
+#endif
 
 namespace dmb
 {
+
+#if defined(_WIN32)
+	inline void __get_cpuid(unsigned int n, unsigned int * a, unsigned int * b, unsigned int * c, unsigned int * d)
+	{
+		int regs[4];
+		__cpuid(regs, static_cast<int>(n));
+		*a = static_cast<unsigned int>(regs[0]);
+		*b = static_cast<unsigned int>(regs[1]);
+		*c = static_cast<unsigned int>(regs[2]);
+		*d = static_cast<unsigned int>(regs[3]);
+	}
+#endif
 
 	template <typename U>
 	struct num
@@ -89,36 +149,44 @@ namespace dmb
 	};
 
 	template <typename P>
-	__attribute__((always_inline)) inline usize nop(P && p)
+	dmb_inline
+	usize nop(P && p)
 	{
 		usize garbage;
 
+#if defined(__GNUC__) || defined(__clang__)
 		asm volatile(
-		   ""
-		   : "=r" (garbage), "+m" (p)
-		   :
-		   :
+			""
+			: "=r" (garbage), "+m" (p) // todo +r
+			:
+			:
 		);
+#elif defined(_MSC_VER)
+		garbage = reinterpret_cast<usize>(&p);
+#endif
 
 		return garbage;
 	}
 
 	template <typename F>
-	__attribute__((always_inline)) inline auto invoke(F && f, usize index)
+	dmb_inline
+	auto invoke(F && f, usize index)
 		-> decltype(static_cast<F &&>(f)(index, index))
 	{
 		return static_cast<F &&>(f)(index, index);
 	}
 
 	template <typename F>
-	__attribute__((always_inline)) inline auto invoke(F && f, usize index)
+	dmb_inline
+	auto invoke(F && f, usize index)
 		-> decltype(static_cast<F &&>(f)(index))
 	{
 		return static_cast<F &&>(f)(index);
 	}
 
 	template <typename F>
-	__attribute__((always_inline)) inline auto invoke(F && f, usize index)
+	dmb_inline
+	auto invoke(F && f, usize index)
 		-> decltype(static_cast<F &&>(f)())
 	{
 		dmb_unused(index);
@@ -127,43 +195,71 @@ namespace dmb
 	}
 
 	template <typename F>
-	__attribute__((noinline)) inline void timeonce(utime * r, int fd, F && f, usize idx)
+	dmb_inline
+	void timeonce(utime * r, int fd, F && f, usize idx)
 	{
+#if defined(__GNUC__) || defined(__clang__)
+# if defined(_WIN32)
+		dmb_unused(fd);
+# endif
 		unsigned bfrlo, bfrhi, afrlo, afrhi;
 
 		_mm_mfence();
+# if !defined(_WIN32)
 		::ioctl(fd, PERF_EVENT_IOC_ENABLE, 0);
+# endif
 		asm volatile(
-		   "xor %%eax, %%eax\n\t"
-		   "xor %k2, %%ecx\n\t"  // %k2 - the low 32 bits of %2
-		   "cpuid\n\t"
+			"xor %%eax, %%eax\n\t"
+			"xor %k2, %%ecx\n\t"  // %k2 - the low 32 bits of %2
+			"cpuid\n\t"
 			"rdtsc\n\t"
-		   "lfence\n\t"
+			"lfence\n\t"
 			"mov %%edx, %0\n\t"
 			"mov %%eax, %1"
 			: "=r" (bfrhi), "=r" (bfrlo), "+r" (idx)
 			:
-		   : "%rax", "%rdx", "%rbx", "%rcx"
+			: "%rax", "%rdx", "%rbx", "%rcx"
 		);
 
 		auto && t = invoke(static_cast<F &&>(f), idx);
 
 		asm volatile(
-		   "xor %%eax, %%eax\n\t"
-		   "xor %k2, %%ecx\n\t"
-		   "cpuid\n\t"
+			"xor %%eax, %%eax\n\t"
+			"xor %k2, %%ecx\n\t"
+			"cpuid\n\t"
 			"rdtsc\n\t"
 			"lfence\n\t"
 			"mov %%edx, %0\n\t"
 			"mov %%eax, %1"
-		   : "=r" (afrhi), "=r" (afrlo), "+m" (t) // todo +r
+			: "=r" (afrhi), "=r" (afrlo), "+m" (t) // todo +r
 			:
-		   : "%rax", "%rdx", "%rbx", "%rcx"
+			: "%rax", "%rdx", "%rbx", "%rcx"
 		);
+# if !defined(_WIN32)
 		::ioctl(fd, PERF_EVENT_IOC_DISABLE, 0);
+# endif
 		_mm_mfence();
 
 		*r = (((utime)afrhi << 32) | afrlo) - (((utime)bfrhi << 32) | bfrlo);
+#elif defined(_MSC_VER)
+		dmb_unused(fd);
+
+		int trash[4];
+
+		_mm_mfence();
+		__cpuid(trash, 0);
+		const unsigned long long bfr = __rdtsc();
+		_mm_lfence();
+
+		auto && t = invoke(static_cast<F &&>(f), idx);
+
+		__cpuidex(trash, 0, *reinterpret_cast<char *>(&t));
+		const unsigned long long afr = __rdtsc();
+		_mm_lfence();
+		_mm_mfence();
+
+		*r = afr - bfr;
+#endif
 	}
 
 }
@@ -172,9 +268,6 @@ namespace dmb
 #define __DMB_NAME__(stem, line) __DMB_CNCT__(stem, line)
 #define __DMB_FUNC__ __DMB_NAME__(DMB_FUNC, __LINE__)
 #define __DMB_GLOB__ __DMB_NAME__(DMB_GLOB, __LINE__)
-
-#include <cpuid.h> // todo remove
-#include <unistd.h>
 
 namespace dmb
 {
@@ -226,7 +319,7 @@ namespace dmb
 			1000000000000000000,
 		};
 
-		const int exp = static_cast<int>(::log10(static_cast<double>(1000000 * info.tsc_frequency / val - 1))); // todo fast log10
+		const int exp = static_cast<int>(::log10(static_cast<double>(1000000ull * info.tsc_frequency / val - 1))); // todo fast log10
 		const utime scl = exp_table[exp];
 		const utime num = val * scl / info.tsc_frequency;
 
@@ -245,7 +338,7 @@ namespace dmb
 
 		val = num;
 
-		*reinterpret_cast<long *>(buffer) = 0x2020202020202020;
+		*reinterpret_cast<uint64 *>(buffer) = 0x2020202020202020;
 
 		buffer[7] = unit;
 
@@ -305,12 +398,14 @@ namespace dmb
 		const char unit = unit_table[(count - 1 - shift) / 3];
 		const int split = shift != 0 ? 6 - shift : count < 4 ? 7 : count < 7 ? 3 : (count - 1) % 3 + 1;
 
-		while (val >= 1000000)
+		if (val >= 1000000)
 		{
-			val /= 10;
+			*reinterpret_cast<uint64 *>(buffer) = 0x303030302e303031;
+
+			return;
 		}
 
-		*reinterpret_cast<long *>(buffer) = 0x2020202020202020;
+		*reinterpret_cast<uint64 *>(buffer) = 0x2020202020202020;
 
 		buffer[7] = unit;
 
@@ -372,9 +467,9 @@ namespace dmb
 		template <typename F>
 		void operator = (F && foo)
 		{
-			::write(STDOUT_FILENO, unit.data(), unit.size());
+			dmb::write(STDOUT_FILENO, unit.data(), unit.size());
 
-			::write(STDOUT_FILENO, "  1000\n", 7);
+			dmb::write(STDOUT_FILENO, "  1000\n", 7);
 
 			// todo warmup
 			// todo unroll 2, 4, 8
@@ -382,34 +477,35 @@ namespace dmb
 			// todo hot cache
 
 			utime res[1000];
-			long fd0[1000];
-			long fd1[1000];
-			long fd2[1000];
-			long fd3[1000];
-			long fd4[1000];
+			// long fd0[1000];
+			// long fd1[1000];
+			// long fd2[1000];
+			// long fd3[1000];
+			// long fd4[1000];
 			res[1] = 0;
 			do
 			{
-				timeonce(res + 0, fds[0], static_cast<F &&>(foo), 0);
+				// timeonce(res + 0, fds[0], static_cast<F &&>(foo), 0);
+				timeonce(res + 0, -1, static_cast<F &&>(foo), 0);
 				res[1] += res[0];
 			}
 			while (res[1] < 2000000);
 			usize idx = 0;
 			do
 			{
-				::ioctl(fds[0], PERF_EVENT_IOC_RESET, 0);
-				::ioctl(fds[1], PERF_EVENT_IOC_RESET, 0);
-				::ioctl(fds[2], PERF_EVENT_IOC_RESET, 0);
-				::ioctl(fds[3], PERF_EVENT_IOC_RESET, 0);
-				::ioctl(fds[4], PERF_EVENT_IOC_RESET, 0);
+				// ::ioctl(fds[0], PERF_EVENT_IOC_RESET, 0);
+				// ::ioctl(fds[1], PERF_EVENT_IOC_RESET, 0);
+				// ::ioctl(fds[2], PERF_EVENT_IOC_RESET, 0);
+				// ::ioctl(fds[3], PERF_EVENT_IOC_RESET, 0);
+				// ::ioctl(fds[4], PERF_EVENT_IOC_RESET, 0);
 
 				timeonce(res + idx, fds[0], static_cast<F &&>(foo), idx);
 
-				::read(fds[0], fd0 + idx, sizeof(long));
-				::read(fds[1], fd1 + idx, sizeof(long));
-				::read(fds[2], fd2 + idx, sizeof(long));
-				::read(fds[3], fd3 + idx, sizeof(long));
-				::read(fds[4], fd4 + idx, sizeof(long));
+				// ::read(fds[0], fd0 + idx, sizeof(long));
+				// ::read(fds[1], fd1 + idx, sizeof(long));
+				// ::read(fds[2], fd2 + idx, sizeof(long));
+				// ::read(fds[3], fd3 + idx, sizeof(long));
+				// ::read(fds[4], fd4 + idx, sizeof(long));
 
 				idx++;
 			}
@@ -420,11 +516,11 @@ namespace dmb
 				res[i] -= tsc_overhead;
 			}
 
-			// todo measured to be 26
-			for (usize i = 0; i < nsamples; i++)
-			{
-				fd0[i] -= 26;
-			}
+			// // todo measured to be 26
+			// for (usize i = 0; i < nsamples; i++)
+			// {
+			// 	fd0[i] -= 26;
+			// }
 
 			//
 
@@ -531,12 +627,12 @@ namespace dmb
 			write_time_and_unit(info, buffer + 86 + 48, static_cast<utime>((::expf(log_standard_deviation * log_standard_deviation) - 1.f) * ::expf(2.f * log_median + log_standard_deviation * log_standard_deviation) + .5f));
 			write_time_and_unit(info, buffer + 86 + 64, static_cast<utime>(best_estimate + .5f));
 
-			write_timeless_number(buffer + 166, (utime)fd0[0]);
-			write_timeless_number(buffer + 166 + 16, (utime)fd1[1]);
-			write_timeless_number(buffer + 166 + 32, (utime)fd2[2]);
-			write_timeless_number(buffer + 166 + 48, (utime)fd3[3]);
-			write_timeless_number(buffer + 166 + 64, (utime)fd4[4]);
-			::write(STDOUT_FILENO, buffer, sizeof buffer - 1);
+			// write_timeless_number(buffer + 166, (utime)fd0[0]);
+			// write_timeless_number(buffer + 166 + 16, (utime)fd1[1]);
+			// write_timeless_number(buffer + 166 + 32, (utime)fd2[2]);
+			// write_timeless_number(buffer + 166 + 48, (utime)fd3[3]);
+			// write_timeless_number(buffer + 166 + 64, (utime)fd4[4]);
+			dmb::write(STDOUT_FILENO, buffer, sizeof buffer - 1);
 
 			usize histogram[78] = {};
 			const float log_min = static_cast<float>(min);
@@ -572,7 +668,7 @@ namespace dmb
 				{
 					histogram_line[bin + 1] = histogram[bin] > line ? '#' : ' ';
 				}
-				::write(STDOUT_FILENO, histogram_line, 1 + bin_count + 1);
+				dmb::write(STDOUT_FILENO, histogram_line, 1 + bin_count + 1);
 			}
 		}
 	};
@@ -591,27 +687,27 @@ namespace dmb
 			: flags(0)
 			, nfuncs(0)
 		{
-			struct perf_event_attr pe{};
-			pe.type = PERF_TYPE_HARDWARE;
-			pe.size = sizeof(pe);
-			pe.config = PERF_COUNT_HW_INSTRUCTIONS;
-			pe.disabled = 1;
-			pe.exclude_kernel = 1;
-			pe.exclude_hv = 1;
+			// struct perf_event_attr pe{};
+			// pe.type = PERF_TYPE_HARDWARE;
+			// pe.size = sizeof(pe);
+			// pe.config = PERF_COUNT_HW_INSTRUCTIONS;
+			// pe.disabled = 1;
+			// pe.exclude_kernel = 1;
+			// pe.exclude_hv = 1;
 
-			fds[0] = perf_event_open(&pe, 0, -1, -1, 0);
-			if (fds[0] == -1)
-			{
-				// /proc/sys/kernel/perf_event_paranoid
-				// 3 ought to work
-				::perror("perf_event_open");
-				::exit(1);
-			}
+			// fds[0] = perf_event_open(&pe, 0, -1, -1, 0);
+			// if (fds[0] == -1)
+			// {
+			// 	// /proc/sys/kernel/perf_event_paranoid
+			// 	// 3 ought to work
+			// 	::perror("perf_event_open");
+			// 	::exit(1);
+			// }
 
-			fds[1] = perf_event_add(fds[0], PERF_COUNT_HW_CACHE_REFERENCES);
-			fds[2] = perf_event_add(fds[0], PERF_COUNT_HW_CACHE_MISSES);
-			fds[3] = perf_event_add(fds[0], PERF_COUNT_HW_BRANCH_INSTRUCTIONS);
-			fds[4] = perf_event_add(fds[0], PERF_COUNT_HW_BRANCH_MISSES);
+			// fds[1] = perf_event_add(fds[0], PERF_COUNT_HW_CACHE_REFERENCES);
+			// fds[2] = perf_event_add(fds[0], PERF_COUNT_HW_CACHE_MISSES);
+			// fds[3] = perf_event_add(fds[0], PERF_COUNT_HW_BRANCH_INSTRUCTIONS);
+			// fds[4] = perf_event_add(fds[0], PERF_COUNT_HW_BRANCH_MISSES);
 		}
 
 		static impl & get()
@@ -632,7 +728,7 @@ namespace dmb
 				if (flags & 1)
 				{
 					static const char buffer[] = "cpu info\n";
-					::write(STDOUT_FILENO, buffer, sizeof buffer - 1);
+					dmb::write(STDOUT_FILENO, buffer, sizeof buffer - 1);
 				}
 
 				{
@@ -710,14 +806,14 @@ namespace dmb
 					if (flags & 1)
 					{
 						::printf(" nominal frequency of the core crystal clock: %uHz\n", core_crystal_clock_frequency);
-						::printf(" TSC frequency: %luHz\n", info.tsc_frequency);
+						::printf(" TSC frequency: %lluHz\n", info.tsc_frequency);
 					}
 				}
 
 				if (flags & 1)
 				{
 					const char newline = '\n';
-					::write(STDOUT_FILENO, &newline, sizeof newline);
+					dmb::write(STDOUT_FILENO, &newline, sizeof newline);
 				}
 			}
 		}
