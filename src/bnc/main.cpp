@@ -40,6 +40,25 @@ DMB_SAMPLE("clock accuracy") // todo on Windows, hide by default, never disable
 }
 #endif
 
+DMB_SAMPLE("clock overhead")
+{
+
+	DMB_CASE("RDTSC overhead")()
+	{
+		return __rdtsc();
+	};
+
+#if defined(_WIN32)
+	DMB_CASE("QueryPerformanceCounter overhead")()
+	{
+		LARGE_INTEGER ticks;
+		::QueryPerformanceCounter(&ticks);
+		return ticks.QuadPart;
+	};
+#endif
+
+}
+
 DMB_SAMPLE("")
 {
 
