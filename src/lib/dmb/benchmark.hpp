@@ -499,7 +499,14 @@ namespace dmb
 				// ::ioctl(fds[3], PERF_EVENT_IOC_RESET, 0);
 				// ::ioctl(fds[4], PERF_EVENT_IOC_RESET, 0);
 
-				timeonce(res + idx, fds[0], static_cast<F &&>(foo), idx);
+				do
+				{
+					// timeonce(res + idx, fds[0], static_cast<F &&>(foo), idx);
+					timeonce(res + idx, -1, static_cast<F &&>(foo), idx);
+
+					idx++;
+				}
+				while (idx < nsamples);
 
 				// ::read(fds[0], fd0 + idx, sizeof(long));
 				// ::read(fds[1], fd1 + idx, sizeof(long));
@@ -507,7 +514,40 @@ namespace dmb
 				// ::read(fds[3], fd3 + idx, sizeof(long));
 				// ::read(fds[4], fd4 + idx, sizeof(long));
 
-				idx++;
+				for (usize i = 0; i < nsamples; i++)
+				{
+					res[i] -= tsc_overhead;
+				}
+
+				float log_median = 0.f;
+				for (usize i = 0; i < nsamples; i++)
+				{
+					log_median += ::logf(static_cast<float>(res[i]));
+				}
+				log_median /= static_cast<float>(nsamples);
+
+				float log_standard_deviation = 0.f;
+				for (usize i = 0; i < nsamples; i++)
+				{
+					const float diff = ::logf(static_cast<float>(res[i])) - log_median;
+					log_standard_deviation += diff * diff;
+				}
+				log_standard_deviation /= static_cast<float>(nsamples);
+				log_standard_deviation = ::sqrtf(log_standard_deviation);
+
+				for (usize i = 0; i < idx;)
+				{
+					const float res_standard_normal = (::logf(static_cast<float>(res[i])) - log_median) / log_standard_deviation;
+					const int index_of_res = static_cast<int>(res_standard_normal * 100.f + .5f) + 410;
+
+					if (index_of_res < 2 * 410 - 1) i++;
+					else res[i] = res[--idx];
+				}
+
+				for (usize i = 0; i < idx; i++)
+				{
+					res[i] += tsc_overhead;
+				}
 			}
 			while (idx < nsamples);
 
